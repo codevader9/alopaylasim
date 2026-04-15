@@ -1,17 +1,33 @@
-import { supabase } from './supabase'
-
 const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:3000'
 
-async function getAuthHeaders() {
-  const { data: { session } } = await supabase.auth.getSession()
+function getAccessToken(): string | null {
+  try {
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i)
+      if (key && key.startsWith('sb-') && key.endsWith('-auth-token')) {
+        const raw = localStorage.getItem(key)
+        if (!raw) return null
+        const data = JSON.parse(raw)
+        return data.access_token || null
+      }
+    }
+    return null
+  } catch {
+    return null
+  }
+}
+
+function getAuthHeaders() {
+  const token = getAccessToken()
   return {
     'Content-Type': 'application/json',
-    ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}),
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
   }
 }
 
 async function request(path: string, options: RequestInit = {}) {
-  const headers = await getAuthHeaders()
+  const headers = getAuthHeaders()
+  console.log('[API]', path, 'Auth:', headers.Authorization ? 'Bearer ' + headers.Authorization.substring(7, 30) + '...' : 'YOK')
   const res = await fetch(`${API_BASE}${path}`, { ...options, headers: { ...headers, ...(options.headers || {}) } })
   if (!res.ok) {
     const err = await res.json().catch(() => ({ error: res.statusText }))

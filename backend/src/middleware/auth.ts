@@ -18,13 +18,11 @@ export async function authMiddleware(req: AuthRequest, res: Response, next: Next
   const token = authHeader.replace('Bearer ', '')
 
   try {
-    // Kullanıcının kendi token'ı ile client oluştur
     const userClient = createClient(env.supabaseUrl, env.supabaseAnonKey, {
       global: { headers: { Authorization: `Bearer ${token}` } },
     })
 
-    // Token'dan user bilgisi al
-    const { data: { user }, error } = await userClient.auth.getUser()
+    const { data: { user }, error } = await userClient.auth.getUser(token)
 
     if (error || !user) {
       console.error('[Auth] Token doğrulama hatası:', error?.message)
