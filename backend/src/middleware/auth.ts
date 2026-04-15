@@ -1,6 +1,5 @@
 import type { Request, Response, NextFunction } from 'express'
-import { createClient, type SupabaseClient } from '@supabase/supabase-js'
-import { env } from '../config/env.js'
+import type { SupabaseClient } from '@supabase/supabase-js'
 import { supabaseAdmin } from '../config/supabase.js'
 
 export interface AuthRequest extends Request {
@@ -33,13 +32,9 @@ export async function authMiddleware(req: AuthRequest, res: Response, next: Next
       .eq('id', user.id)
       .single()
 
-    const userClient = createClient(env.supabaseUrl, env.supabaseAnonKey, {
-      global: { headers: { Authorization: `Bearer ${token}` } },
-    })
-
     req.userId = user.id
     req.userRole = profile?.role || 'user'
-    req.supabase = userClient
+    req.supabase = supabaseAdmin
     next()
   } catch (err: any) {
     console.error('[Auth] Hata:', err.message)
