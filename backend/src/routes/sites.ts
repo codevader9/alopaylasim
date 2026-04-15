@@ -1,0 +1,103 @@
+import { Router } from 'express'
+import { authMiddleware, adminOnly, type AuthRequest } from '../middleware/auth.js'
+import type { Request, Response } from 'express'
+import { supabaseAdmin } from '../config/supabase.js'
+import fs from 'fs'
+import path from 'path'
+import sharp from 'sharp'
+
+const router = Router()
+
+// Public reads
+router.get('/', async (_req: Request, res: Response) => {
+  const { data, error } = await supabaseAdmin.from('sites').select('*').order('created_at', { ascending: false })
+  if (error) { res.status(500).json({ error: error.message }); return }
+  res.json(data)
+})
+
+router.get('/:id', async (req: Request, res: Response) => {
+  const { data, error } = await supabaseAdmin.from('sites').select('*').eq('id', req.params.id).single()
+  if (error) { res.status(404).json({ error: 'Site bulunamadı' }); return }
+  res.json(data)
+})
+
+// Admin writes
+router.post('/', authMiddleware as any, adminOnly as any, async (req: AuthRequest, res: Response) => {
+  const { name, domain, description, settings } = req.body
+  const { data, error } = await req.supabase!.from('sites').insert({ name, domain, description, settings }).select().single()
+  if (error) { res.status(500).json({ error: error.message }); return }
+  res.status(201).json(data)
+})
+
+router.put('/:id', authMiddleware as any, adminOnly as any, async (req: AuthRequest, res: Response) => {
+  const { name, domain, description, is_active, settings } = req.body
+  const { data, error } = await req.supabase!.from('sites').update({ name, domain, description, is_active, settings }).eq('id', req.params.id).select().single()
+  if (error) { res.status(500).json({ error: error.message }); return }
+  res.json(data)
+})
+
+router.delete('/:id', authMiddleware as any, adminOnly as any, async (req: AuthRequest, res: Response) => {
+  const { error } = await req.supabase!.from('sites').delete().eq('id', req.params.id)
+  if (error) { res.status(500).json({ error: error.message }); return }
+  res.json({ success: true })
+})
+
+// Logo upload -> Supabase Storage
+router.post('/:id/logo', authMiddleware as any, adminOnly as any, async (req: AuthRequest, res: Response) => {
+  const { logo } = req.body
+  if (!logo) { res.status(400).json({ error: 'Logo verisi gerekli' }); return }
+  try {
+    const base64Data = logo.replace(/^data:image\/\w+;base64,/, '')
+    const buffer = Buffer.from(base64Data, 'base64')
+    const pngBuffer = await sharp(buffer).resize(600, 200, { fit: 'contain', background: { r: 0, g: 0, b: 0, alpha: 0 } }).png().toBuffer()
+
+    const fileName = `${req.params.id}.png`
+    await supabaseAdmin.storage.from('site-logos').upload(fileName, pngBuffer, {
+      contentType: 'image/png', upsert: true,
+    })
+
+    // Lokal cache'e de yaz (canvas için)
+    const siteLogosDir = path.join(process.cwd(), 'assets', 'site-logos')
+    if (!fs.existsSync(siteLogosDir)) fs.mkdirSync(siteLogosDir, { recursive: true })
+    fs.writeFileSync(path.join(siteLogosDir, fileName), pngBuffer)
+
+    res.json({ success: true })
+  } catch (err: any) {
+    console.error('[Sites] Logo upload error:', err.message)
+    res.status(500).json({ error: err.message })
+  }
+})
+
+router.delete('/:id/logo', authMiddleware as any, adminOnly as any, async (req: AuthRequest, res: Response) => {
+  await supabaseAdmin.storage.from('site-logos').remove([`${req.params.id}.png`])
+  const localPath = path.join(process.cwd(), 'assets', 'site-logos', `${req.params.id}.png`)
+  if (fs.existsSync(localPath)) fs.unlinkSync(localPath)
+  res.json({ success: true })
+})
+
+router.get('/:id/logo', async (req: Request, res: Response) => {
+  // Önce lokal cache kontrol et
+  const siteLogosDir = path.join(process.cwd(), 'assets', 'site-logos')
+  const localPath = path.join(siteLogosDir, `${req.params.id}.png`)
+  if (fs.existsSync(localPath)) {
+    res.set('Content-Type', 'image/png')
+    res.set('Cache-Control', 'public, max-age=3600')
+    res.send(fs.readFileSync(localPath))
+    return
+  }
+
+  // Yoksa Supabase Storage'dan çek ve cache'le
+  const { data } = await supabaseAdmin.storage.from('site-logos').download(`${req.params.id}.png`)
+  if (data) {
+    const buffer = Buffer.from(await data.arrayBuffer())
+    if (!fs.existsSync(siteLogosDir)) fs.mkdirSync(siteLogosDir, { recursive: true })
+    fs.writeFileSync(localPath, buffer)
+    res.set('Content-Type', 'image/png')
+    res.set('Cache-Control', 'public, max-age=3600')
+    res.send(buffer)
+    return
+  }
+  res.status(404).send('')
+})
+
+export default router
