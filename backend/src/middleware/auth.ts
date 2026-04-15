@@ -1,6 +1,7 @@
 import type { Request, Response, NextFunction } from 'express'
 import { createClient, type SupabaseClient } from '@supabase/supabase-js'
 import { env } from '../config/env.js'
+import { supabaseAdmin } from '../config/supabase.js'
 
 export interface AuthRequest extends Request {
   userId?: string
@@ -18,11 +19,7 @@ export async function authMiddleware(req: AuthRequest, res: Response, next: Next
   const token = authHeader.replace('Bearer ', '')
 
   try {
-    const userClient = createClient(env.supabaseUrl, env.supabaseAnonKey, {
-      global: { headers: { Authorization: `Bearer ${token}` } },
-    })
-
-    const { data: { user }, error } = await userClient.auth.getUser(token)
+    const { data: { user }, error } = await supabaseAdmin.auth.getUser(token)
 
     if (error || !user) {
       console.error('[Auth] Token doğrulama hatası:', error?.message)
@@ -30,12 +27,15 @@ export async function authMiddleware(req: AuthRequest, res: Response, next: Next
       return
     }
 
-    // Kullanıcının kendi profili -- RLS izin verir (auth.uid() = id)
-    const { data: profile } = await userClient
+    const { data: profile } = await supabaseAdmin
       .from('profiles')
       .select('role')
       .eq('id', user.id)
       .single()
+
+    const userClient = createClient(env.supabaseUrl, env.supabaseAnonKey, {
+      global: { headers: { Authorization: `Bearer ${token}` } },
+    })
 
     req.userId = user.id
     req.userRole = profile?.role || 'user'
